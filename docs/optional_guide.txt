@@ -1,0 +1,450 @@
+================================================================================
+   PRICE UPDATE GUIDE - TOTVS SYSTEM
+================================================================================
+System: TOTVS (Ex CM Soluções Informáticas)
+Database: SQL Server 2014
+Last updated: January 2026
+
+IMPORTANT: This guide has been anonymized for professional portfolio use.
+Sensitive data has been modified or removed.
+
+================================================================================
+   1. POS IDENTIFICATION
+================================================================================
+
+Available POSs in the system:
+  RT  = Restaurant     (IdTipoDebCred = 52)
+  ROM = Room Service   (IdTipoDebCred = 56)
+  LV  = Laundry        (IdTipoDebCred = 55)
+  FB  = Minibar        (IdTipoDebCred = 54)
+  TER = Terraces       (IdTipoDebCred = 51)
+  TR  = Cards          (IdTipoDebCred = 229)
+
+
+================================================================================
+   2. IMPORTANT: RT AND ROM HAVE IDENTICAL PRICES
+================================================================================
+
+Restaurant (52) and Room Service (56) POSs ALWAYS have the same prices.
+Therefore:
+
+  ✓ Updated TOGETHER in a single operation
+  ✓ Use: WHERE IdTipoDebCred IN (52, 56)
+  ✓ Separate backups for safety, joint update
+  ✓ Verification done for both simultaneously
+
+Other POSs have different prices and are updated separately.
+
+
+================================================================================
+   3. COMPLETE UPDATE WORKFLOW
+================================================================================
+
+STEP A: Percentage increase via TOTVS system POS module
+  - From "PDF Configuration" → Update prices by %
+  - Apply to RT and ROM
+  - Prices of 0.01 (symbolic) are automatically maintained by the
+    NUMERIC(12,2) data type
+
+STEP B: Rounding to multiples via SQL (this document)
+  - Rounds to multiples of 200, 500, 1000, etc.
+  - Automatically protects prices < 2
+
+⚠️ This document covers STEP B (SQL rounding).
+
+
+================================================================================
+   4. QUICK PROCESS (experienced users)
+================================================================================
+
+For those already familiar with the workflow:
+
+1. Clean old backups (see section 5)
+
+2. Create separate backups:
+   SELECT * INTO cm.PDVITEM_BACKUP_REDONDEO_RT
+   FROM cm.PDVITEM WHERE IdTipoDebCred = 52;
+   
+   SELECT * INTO cm.PDVITEM_BACKUP_REDONDEO_ROM
+   FROM cm.PDVITEM WHERE IdTipoDebCred = 56;
+
+3. Preview changes (see STEP 1, section 7)
+
+4. Update RT + ROM together:
+   UPDATE cm.PDVITEM 
+   SET Preco = CASE 
+       WHEN Preco < 2 THEN Preco
+       ELSE ROUND(Preco / 200.0, 0) * 200
+   END
+   WHERE IdTipoDebCred IN (52, 56) AND Preco >= 2;
+
+5. Verify (see STEP 4.2, section 7)
+
+
+================================================================================
+   5. CLEANUP - Verify and delete old backups
+================================================================================
+
+BEFORE creating new backups, verify and clean old ones:
+
+-- List all existing backups
+SELECT TABLE_NAME, CREATE_DATE
+FROM INFORMATION_SCHEMA.TABLES t
+LEFT JOIN sys.tables st ON t.TABLE_NAME = st.name
+WHERE TABLE_SCHEMA = 'cm' 
+  AND TABLE_NAME LIKE '%BACKUP%'
+ORDER BY TABLE_NAME;
+
+-- Delete specific backup (VERIFY NAME FIRST!)
+DROP TABLE cm.PDVITEM_BACKUP_REDONDEO_ROM;
+DROP TABLE cm.PDVITEM_BACKUP_REDONDEO_RT;
+
+
+================================================================================
+   6. EXPLORATION QUERIES (READ-ONLY)
+================================================================================
+
+--------------------------------------------------------------------------------
+6.1 View RT and ROM items
+--------------------------------------------------------------------------------
+SELECT 
+    p.CodArtigo,
+    p.Preco,
+    pr.DescProd,
+    p.IdTipoDebCred
+FROM cm.PDVITEM p
+LEFT JOIN cm.PRODUTO pr ON p.CodArtigo = pr.CodProduto
+WHERE p.IdTipoDebCred IN (52, 56)
+ORDER BY pr.DescProd;
+
+
+--------------------------------------------------------------------------------
+6.2 Price statistics
+--------------------------------------------------------------------------------
+SELECT IdTipoDebCred, 
+       COUNT(*) as quantity, 
+       MIN(Preco) as min_price,
+       MAX(Preco) as max_price,
+       AVG(Preco) as avg_price
+FROM cm.PDVITEM 
+WHERE IdTipoDebCred IN (52, 56)
+  AND Preco > 2
+GROUP BY IdTipoDebCred;
+
+
+--------------------------------------------------------------------------------
+6.3 Price range distribution
+--------------------------------------------------------------------------------
+SELECT IdTipoDebCred, 
+       COUNT(CASE WHEN Preco < 100 THEN 1 END) as very_low,
+       COUNT(CASE WHEN Preco >= 100 AND Preco < 1000 THEN 1 END) as low,
+       COUNT(CASE WHEN Preco >= 1000 AND Preco < 10000 THEN 1 END) as medium,
+       COUNT(CASE WHEN Preco >= 10000 THEN 1 END) as high
+FROM cm.PDVITEM 
+WHERE IdTipoDebCred IN (52, 56)
+GROUP BY IdTipoDebCred;
+
+
+================================================================================
+   7. DETAILED STEP-BY-STEP PROCESS
+================================================================================
+
+⚠️ PREREQUISITE: Have increased prices by % using the system POS module
+
+⚠️ IMPORTANT:
+   - Execute outside operating hours
+   - Prices < 2 are NOT modified (0.01 symbolic protected)
+   - Rounding is to nearest multiple
+   - ALWAYS backup before
+
+
+--------------------------------------------------------------------------------
+STEP 1: PREVIEW - See how changes would look (WITHOUT EXECUTING)
+--------------------------------------------------------------------------------
+
+-- Change divisor as needed: 200, 500, 1000
+
+SELECT 
+    p.CodArtigo,
+    pr.DescProd,
+    p.Preco as CurrentPrice,
+    CASE 
+        WHEN p.Preco < 2 THEN p.Preco
+        ELSE ROUND(p.Preco / 200.0, 0) * 200  -- MODIFY DIVISOR HERE
+    END as NewPrice,
+    CASE 
+        WHEN p.Preco < 2 THEN 0
+        ELSE (ROUND(p.Preco / 200.0, 0) * 200) - p.Preco  -- MODIFY DIVISOR HERE
+    END as Difference,
+    p.IdTipoDebCred
+FROM cm.PDVITEM p
+LEFT JOIN cm.PRODUTO pr ON p.CodArtigo = pr.CodProduto
+WHERE p.IdTipoDebCred IN (52, 56)
+ORDER BY p.Preco DESC;
+
+
+ROUNDING EXAMPLES:
+  Divisor 200:  1850→2000, 2200→2200, 2300→2400
+  Divisor 500:  1850→2000, 2200→2000, 2300→2500, 2600→2500
+  Divisor 1000: 1850→2000, 2200→2000, 4800→5000
+
+
+--------------------------------------------------------------------------------
+STEP 2: BACKUP - Create safety backup (SEPARATE for precaution)
+--------------------------------------------------------------------------------
+
+⚠️ IMPORTANT: Clean old backups first (see section 5)
+
+-- BACKUP RT
+SELECT * 
+INTO cm.PDVITEM_BACKUP_REDONDEO_RT
+FROM cm.PDVITEM 
+WHERE IdTipoDebCred = 52;
+
+-- BACKUP ROM
+SELECT * 
+INTO cm.PDVITEM_BACKUP_REDONDEO_ROM
+FROM cm.PDVITEM 
+WHERE IdTipoDebCred = 56;
+
+-- Verify they were created correctly
+SELECT COUNT(*) as RecordsRT
+FROM cm.PDVITEM_BACKUP_REDONDEO_RT;
+
+SELECT COUNT(*) as RecordsROM
+FROM cm.PDVITEM_BACKUP_REDONDEO_ROM;
+
+
+--------------------------------------------------------------------------------
+STEP 3A: OPTIONAL - Test with few items (maximum precaution)
+--------------------------------------------------------------------------------
+
+Only if you want to validate with specific items before mass change:
+
+-- Get some codes to test
+SELECT TOP 5 CodArtigo, Preco, pr.DescProd, IdTipoDebCred
+FROM cm.PDVITEM p
+LEFT JOIN cm.PRODUTO pr ON p.CodArtigo = pr.CodProduto
+WHERE IdTipoDebCred IN (52, 56) AND Preco >= 2
+ORDER BY NEWID();
+
+-- Update only RT first
+UPDATE cm.PDVITEM 
+SET Preco = CASE 
+    WHEN Preco < 2 THEN Preco
+    ELSE ROUND(Preco / 200.0, 0) * 200  -- MODIFY DIVISOR
+END
+WHERE IdTipoDebCred = 52  -- RT only
+  AND CodArtigo IN (010711, 011809, 012008);  -- CODES OBTAINED
+
+-- Verify it worked, then apply to ROM
+UPDATE cm.PDVITEM 
+SET Preco = CASE 
+    WHEN Preco < 2 THEN Preco
+    ELSE ROUND(Preco / 200.0, 0) * 200  -- MODIFY DIVISOR
+END
+WHERE IdTipoDebCred = 56  -- ROM only
+  AND CodArtigo IN (010711, 011809, 012008);  -- SAME CODES
+
+
+--------------------------------------------------------------------------------
+STEP 3B: COMPLETE RT + ROM UPDATE (RECOMMENDED)
+--------------------------------------------------------------------------------
+
+Update Restaurant and Room Service in a single operation:
+
+UPDATE cm.PDVITEM 
+SET Preco = CASE 
+    WHEN Preco < 2 THEN Preco
+    ELSE ROUND(Preco / 200.0, 0) * 200  -- MODIFY DIVISOR HERE
+END
+WHERE IdTipoDebCred IN (52, 56)  -- RT and ROM together
+  AND Preco >= 2;
+
+
+-- For other POSs individually:
+UPDATE cm.PDVITEM 
+SET Preco = CASE 
+    WHEN Preco < 2 THEN Preco
+    ELSE ROUND(Preco / 200.0, 0) * 200  -- MODIFY DIVISOR
+END
+WHERE IdTipoDebCred = 55  -- E.g.: Laundry
+  AND Preco >= 2;
+
+
+--------------------------------------------------------------------------------
+STEP 4: VERIFICATION - Confirm everything went well
+--------------------------------------------------------------------------------
+
+---[ 4.1 Security verification (bidirectional EXCEPT) ]---
+
+-- For RT:
+SELECT COUNT(*) as ModifiedRecords_RT
+FROM (
+    SELECT * FROM cm.PDVITEM WHERE IdTipoDebCred = 52
+    EXCEPT 
+    SELECT * FROM cm.PDVITEM_BACKUP_REDONDEO_RT
+) changes;
+
+SELECT COUNT(*) as DeletedRecords_RT
+FROM (
+    SELECT * FROM cm.PDVITEM_BACKUP_REDONDEO_RT
+    EXCEPT 
+    SELECT * FROM cm.PDVITEM WHERE IdTipoDebCred = 52
+) deleted;
+
+-- For ROM:
+SELECT COUNT(*) as ModifiedRecords_ROM
+FROM (
+    SELECT * FROM cm.PDVITEM WHERE IdTipoDebCred = 56
+    EXCEPT 
+    SELECT * FROM cm.PDVITEM_BACKUP_REDONDEO_ROM
+) changes;
+
+SELECT COUNT(*) as DeletedRecords_ROM
+FROM (
+    SELECT * FROM cm.PDVITEM_BACKUP_REDONDEO_ROM
+    EXCEPT 
+    SELECT * FROM cm.PDVITEM WHERE IdTipoDebCred = 56
+) deleted;
+
+NOTE: If you modified N items, you'll see N "modified" and N "deleted" in each
+      POS - this is NORMAL. They are the same records before/after the change.
+
+
+---[ 4.2 Change details (verification report) ]---
+
+-- RT
+SELECT 
+    b.CodArtigo,
+    pr.DescProd,
+    b.Preco as PreviousPrice,
+    a.Preco as NewPrice,
+    a.Preco - b.Preco as Difference,
+    FORMAT(((a.Preco - b.Preco) / b.Preco) * 100, 'N2') + '%' as PercentageChange
+FROM cm.PDVITEM_BACKUP_REDONDEO_RT b
+JOIN cm.PDVITEM a ON a.CodArtigo = b.CodArtigo AND a.IdTipoDebCred = b.IdTipoDebCred
+LEFT JOIN cm.PRODUTO pr ON b.CodArtigo = pr.CodProduto
+WHERE b.Preco != a.Preco
+ORDER BY ABS(a.Preco - b.Preco) DESC;
+
+-- ROM (should be identical to RT)
+SELECT 
+    b.CodArtigo,
+    pr.DescProd,
+    b.Preco as PreviousPrice,
+    a.Preco as NewPrice,
+    a.Preco - b.Preco as Difference,
+    FORMAT(((a.Preco - b.Preco) / b.Preco) * 100, 'N2') + '%' as PercentageChange
+FROM cm.PDVITEM_BACKUP_REDONDEO_ROM b
+JOIN cm.PDVITEM a ON a.CodArtigo = b.CodArtigo AND a.IdTipoDebCred = b.IdTipoDebCred
+LEFT JOIN cm.PRODUTO pr ON b.CodArtigo = pr.CodProduto
+WHERE b.Preco != a.Preco
+ORDER BY ABS(a.Preco - b.Preco) DESC;
+
+
+================================================================================
+   8. ROLLBACK - Revert changes if something went wrong
+================================================================================
+
+-- Restore RT
+UPDATE cm.PDVITEM
+SET Preco = b.Preco
+FROM cm.PDVITEM p
+JOIN cm.PDVITEM_BACKUP_REDONDEO_RT b
+  ON p.CodArtigo = b.CodArtigo 
+  AND p.IdTipoDebCred = b.IdTipoDebCred
+WHERE p.IdTipoDebCred = 52;
+
+-- Restore ROM
+UPDATE cm.PDVITEM
+SET Preco = b.Preco
+FROM cm.PDVITEM p
+JOIN cm.PDVITEM_BACKUP_REDONDEO_ROM b
+  ON p.CodArtigo = b.CodArtigo 
+  AND p.IdTipoDebCred = b.IdTipoDebCred
+WHERE p.IdTipoDebCred = 56;
+
+-- Verify restoration (should return 0 in both)
+SELECT COUNT(*) as DifferencesRT FROM (
+    SELECT * FROM cm.PDVITEM WHERE IdTipoDebCred = 52
+    EXCEPT 
+    SELECT * FROM cm.PDVITEM_BACKUP_REDONDEO_RT
+) differences;
+
+SELECT COUNT(*) as DifferencesROM FROM (
+    SELECT * FROM cm.PDVITEM WHERE IdTipoDebCred = 56
+    EXCEPT 
+    SELECT * FROM cm.PDVITEM_BACKUP_REDONDEO_ROM
+) differences;
+
+
+================================================================================
+   9. TECHNICAL NOTES
+================================================================================
+
+Automatic protection of symbolic prices:
+  - Preco column: NUMERIC(12,2) with 2 decimals
+  - 0.01 × % always remains 0.01 by automatic truncation
+  - Example: 0.01 × 1.16 = 0.0116 → SQL rounds to 0.01
+  - The "Preco < 2" condition is additional protection
+
+Table structure:
+  - cm.PDVITEM: Prices per POS (each item has one row per POS)
+    * CodArtigo: Product ID
+    * IdTipoDebCred: POS ID
+    * Preco: Item price
+  
+  - cm.PRODUTO: Product descriptions
+    * CodProduto: Product ID
+    * DescProd: Description
+
+Related tables:
+  - PDVALTPRECO: Change history
+  - SERVHOTELXITEMPDV: Items associated with services
+  - CLUBE: Loyalty programs
+  - LOGPAFPDVITEM: System logs
+  - No triggers in PDVITEM
+
+Considerations:
+  - Execute outside operating hours
+  - After mass changes refresh POS module
+  - RT (52) and ROM (56) always have identical prices
+  - Separate backups per POS for maximum safety
+
+
+================================================================================
+   10. EXECUTION CHECKLIST
+================================================================================
+
+  [ ] PREREQUISITE: Increase prices by % in system POS module
+  [ ] Clean old backups (section 5)
+  [ ] Define rounding divisor (200, 500, 1000, etc.)
+  [ ] Execute PREVIEW (Step 1)
+  [ ] Create RT BACKUP (Step 2)
+  [ ] Create ROM BACKUP (Step 2)
+  [ ] Verify both backups were created correctly
+  [ ] [OPTIONAL] Test with 3-5 items in RT and ROM (Step 3A)
+  [ ] Execute complete RT+ROM update (Step 3B)
+  [ ] Verify with EXCEPT for RT and ROM (Step 4.1)
+  [ ] Verify change details (Step 4.2)
+  [ ] Test in the system
+  [ ] Document changes made
+
+
+================================================================================
+   CHANGE LOG
+================================================================================
+
+Date: _______________
+POSs updated: RT (52) + ROM (56)  /  Other: _______________
+Divisor used: _______________
+Items modified per POS: RT: _____ ROM: _____
+Notes: 
+________________________________________________________________________________
+________________________________________________________________________________
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
