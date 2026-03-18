@@ -247,12 +247,12 @@ Creation of 200+ line operational guide with:
 ✅ Complete operational documentation  
 ✅ 3 people trained in process usage
 
-### Next Steps
-🔄 **In development:** Complete automation with Python
+### Next Steps Planned:
+🔄 - Complete automation with Python
    - Automatic generation of printed menu (Word) from Excel
    - Integration of complete flow: Excel → SQL → Word
 
-💡 **Future:** Control dashboard
+💡  Control dashboard
    - Visualization of price change history
    - POS inconsistency alerts
    - Update metrics
